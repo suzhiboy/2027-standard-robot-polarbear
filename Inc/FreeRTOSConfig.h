@@ -141,6 +141,16 @@ standard names. */
 
 /* USER CODE BEGIN Defines */
 /* Section where parameter definitions can be added (for instance, to override default ones in FreeRTOS.h) */
+/* 运行统计与栈溢出检测（压测地基：CPU 占用率、栈水位、控制周期抖动测量的前提） */
+#define configUSE_TRACE_FACILITY             1
+#define configGENERATE_RUN_TIME_STATS        1
+#define configCHECK_FOR_STACK_OVERFLOW       2
+
+/* 运行统计时基使用 DWT CYCCNT（bsp/boards/bsp_dwt.c 实现），调度器启动时自动配置 */
+extern void DWT_Init(void);
+extern uint32_t DWT_GetCyccnt(void);
+#define portCONFIGURE_TIMER_FOR_RUN_TIME_STATS() DWT_Init()
+#define portGET_RUN_TIME_COUNTER_VALUE()         DWT_GetCyccnt()
 /* USER CODE END Defines */
 
 #endif /* FREERTOS_CONFIG_H */

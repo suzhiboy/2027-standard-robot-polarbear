@@ -44,10 +44,12 @@
 #define PID_DEBUG_DATA_SEND_ID    ((uint8_t)0x1C)
 #define JOINT_STATE_SEND_ID       ((uint8_t)0x1D)
 #define ROBOT_MOTION_DATA_SEND_ID ((uint8_t)0x1E)
+#define USB_TEST_SEND_ID          ((uint8_t)0x1F)
 
 #define ROBOT_CMD_DATA_RECEIVE_ID  ((uint8_t)0x01)
 #define PID_DEBUG_DATA_RECEIVE_ID  ((uint8_t)0x02)
 #define VIRTUAL_RC_DATA_RECEIVE_ID ((uint8_t)0x03)
+#define USB_ECHO_RECEIVE_ID        ((uint8_t)0x04)
 // clang-format on
 
 typedef struct
@@ -588,6 +590,22 @@ typedef struct
     uint16_t crc;
 } __packed__ SendDataRobotMotion_s;
 
+// 链路测试数据包（压测/延迟测量专用，不影响既有包的字节布局）
+typedef struct
+{
+    FrameHeader_t frame_header;  // 数据段id = 0x1F
+    uint32_t time_stamp;
+    struct
+    {
+        uint32_t seq;         // 单调递增序号，丢包率的分母；t_pc_tx == 0 表示周期包
+        uint32_t t_tx_us;     // 发送瞬间的 DWT µs 时间戳
+        uint32_t t_rx_us;     // 收到回环请求瞬间（仅回环应答包有效，任务级捕获）
+        uint32_t t_pc_tx;     // PC 填写的发送时刻，原样回传；周期包恒为 0
+        uint8_t payload[16];  // 压力载荷
+    } __packed__ data;
+    uint16_t crc;
+} __packed__ SendDataTest_s;
+
 /*-------------------- Receive --------------------*/
 typedef struct RobotCmdData
 {
@@ -652,4 +670,18 @@ typedef struct
     RC_ctrl_t data;
     uint16_t crc;
 } __packed__ ReceiveDataVirtualRc_s;
+
+// 回环请求数据包（延迟测量：PC → MCU → PC，MCU 收到后立即以 0x1F 应答）
+typedef struct
+{
+    FrameHeader_t frame_header;  // 数据段id = 0x04
+    uint32_t time_stamp;
+    struct
+    {
+        uint32_t seq;         // PC 侧序号
+        uint32_t t_pc_tx;     // PC 发送时刻，原样回传
+        uint8_t payload[16];  // 校验载荷，应答时原样回传
+    } __packed__ data;
+    uint16_t crc;
+} __packed__ ReceiveDataEcho_s;
 #endif  // USB_TYPEDEF_H

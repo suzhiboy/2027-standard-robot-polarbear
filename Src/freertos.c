@@ -291,6 +291,24 @@ __weak void test_task(void const * argument)
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+#if ( configCHECK_FOR_STACK_OVERFLOW > 0 )
+volatile const char * pcOverflowTaskName = NULL;
+
+/**
+  * @brief  栈溢出钩子：记录肇事任务名后停机，便于调试器现场取证
+  * @note   由 FreeRTOS 内核在任务切换检查到栈溢出时调用
+  */
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+{
+  (void)xTask;
+  pcOverflowTaskName = pcTaskName;
+  taskDISABLE_INTERRUPTS();
+  for (;;)
+  {
+  }
+}
+#endif
+/* USER CODE END Application */
      
 /* USER CODE END Application */
 

@@ -32,6 +32,7 @@
 #include <stdbool.h>
 #include <string.h>
 
+#include "bsp_dwt.h"
 #include "CRC8_CRC16.h"
 #include "cmsis_os.h"
 #include "data_exchange.h"
@@ -79,6 +80,7 @@ uint32_t usb_high_water;
 #define SEND_DURATION_GroundRobotPosition 50
 #define SEND_DURATION_JointState          5
 #define SEND_DURATION_RobotMotion         5
+#define SEND_DURATION_Test                5
 // clang-format on
 
 /*******************************************************************************/
@@ -104,7 +106,8 @@ uint32_t usb_high_water;
     X(RfidStatus,          SEND_RFID_STATUS_DATA,           SendDataRfidStatus_s,          RFID_STATUS_SEND_ID,              SEND_DURATION_RfidStatus)          \
     X(GroundRobotPosition, SEND_GROUND_ROBOT_POSITION_DATA, SendDataGroundRobotPosition_s, GROUND_ROBOT_POSITION_SEND_ID,    SEND_DURATION_GroundRobotPosition) \
     X(JointState,          SEND_JOINT_STATE_DATA,           SendDataJointState_s,          JOINT_STATE_SEND_ID,              SEND_DURATION_JointState)          \
-    X(RobotMotion,         SEND_ROBOT_MOTION_DATA,          SendDataRobotMotion_s,         ROBOT_MOTION_DATA_SEND_ID,        SEND_DURATION_RobotMotion)
+    X(RobotMotion,         SEND_ROBOT_MOTION_DATA,          SendDataRobotMotion_s,         ROBOT_MOTION_DATA_SEND_ID,        SEND_DURATION_RobotMotion)         \
+    X(Test,                SEND_TEST_DATA,                  SendDataTest_s,                USB_TEST_SEND_ID,                 SEND_DURATION_Test)
 // clang-format on
 
 /*
@@ -204,6 +207,7 @@ static uint32_t CONTINUE_RECEIVE_CNT = 0;
 static ReceiveDataRobotCmd_s RECEIVE_ROBOT_CMD_DATA;
 static ReceiveDataPidDebug_s RECEIVE_PID_DEBUG_DATA;
 static ReceiveDataVirtualRc_s RECEIVE_VIRTUAL_RC_DATA;
+static ReceiveDataEcho_s RECEIVE_ECHO_DATA;
 
 // 机器人控制指令数据
 RobotCmdData_t ROBOT_CMD_DATA;
@@ -218,6 +222,7 @@ static void UsbReceiveData(void);
 static void UsbInit(void);
 static void GetCmdData(void);
 static void GetVirtualRcCtrlData(void);
+static void UsbEchoReply(const ReceiveDataEcho_s * request);
 
 // 由包表生成全部发送函数的前向声明
 USB_SEND_PACKET_TABLE(USB_PKT_PROTO)
@@ -276,6 +281,8 @@ void usb_task(void const * argument)
  */
 static void UsbInit(void)
 {
+    DWT_Init();  // µs 时基：测试包时间戳使用，与运行统计时基共用，幂等
+
     // 订阅数据
     IMU = Subscribe(IMU_NAME);                             // 获取IMU数据指针
     FDB_SPEED_VECTOR = Subscribe(CHASSIS_FDB_SPEED_NAME);  // 获取底盘速度矢量指针
@@ -297,6 +304,7 @@ static void UsbInit(void)
     memset(&RECEIVE_ROBOT_CMD_DATA, 0, sizeof(ReceiveDataRobotCmd_s));
     memset(&RECEIVE_PID_DEBUG_DATA, 0, sizeof(ReceiveDataPidDebug_s));
     memset(&RECEIVE_VIRTUAL_RC_DATA, 0, sizeof(ReceiveDataVirtualRc_s));
+    memset(&RECEIVE_ECHO_DATA, 0, sizeof(ReceiveDataEcho_s));
     memset(&ROBOT_CMD_DATA, 0, sizeof(RobotCmdData_t));
     memset(&VIRTUAL_RC_CTRL, 0, sizeof(RC_ctrl_t));
 
@@ -560,6 +568,39 @@ static void UsbSendRobotMotionData(void)
     USB_PKT_SEND(SEND_ROBOT_MOTION_DATA, SendDataRobotMotion_s);
 }
 
+/**
+ * @brief 发送链路测试数据包（周期包：seq + 发送时间戳，供丢包率/时序测量）
+ * @note  t_pc_tx 恒为 0，PC 端据此区分周期包与回环应答包
+ */
+static void UsbSendTestData(void)
+{
+    SEND_TEST_DATA.time_stamp = HAL_GetTick();
+    SEND_TEST_DATA.data.seq++;
+    SEND_TEST_DATA.data.t_tx_us = DWT_GetUs();
+    SEND_TEST_DATA.data.t_rx_us = 0;
+    SEND_TEST_DATA.data.t_pc_tx = 0;
+    // 载荷填序号派生模式，PC 端可校验字节翻转
+    for (uint32_t i = 0; i < sizeof(SEND_TEST_DATA.data.payload); i++) {
+        SEND_TEST_DATA.data.payload[i] = (uint8_t)(SEND_TEST_DATA.data.seq + i);
+    }
+    USB_PKT_SEND(SEND_TEST_DATA, SendDataTest_s);
+}
+
+/**
+ * @brief 回环应答：收到 0x04 立即以 0x1F 回传
+ * @note  t_rx 在 usb 任务解析时捕获（任务级上界，非中断级），t_tx - t_rx 即固件处理耗时
+ */
+static void UsbEchoReply(const ReceiveDataEcho_s * request)
+{
+    SEND_TEST_DATA.time_stamp = HAL_GetTick();
+    SEND_TEST_DATA.data.seq = request->data.seq;
+    SEND_TEST_DATA.data.t_pc_tx = request->data.t_pc_tx;
+    SEND_TEST_DATA.data.t_rx_us = DWT_GetUs();
+    memcpy(SEND_TEST_DATA.data.payload, request->data.payload, sizeof(SEND_TEST_DATA.data.payload));
+    SEND_TEST_DATA.data.t_tx_us = DWT_GetUs();
+    USB_PKT_SEND(SEND_TEST_DATA, SendDataTest_s);
+}
+
 /*******************************************************************************/
 /* Receive                                                                     */
 /*******************************************************************************/
@@ -626,6 +667,10 @@ static void UsbReceiveData(void)
                 } break;
                 case VIRTUAL_RC_DATA_RECEIVE_ID: {
                     memcpy(&RECEIVE_VIRTUAL_RC_DATA, sof, sizeof(ReceiveDataVirtualRc_s));
+                } break;
+                case USB_ECHO_RECEIVE_ID: {
+                    memcpy(&RECEIVE_ECHO_DATA, sof, sizeof(ReceiveDataEcho_s));
+                    UsbEchoReply(&RECEIVE_ECHO_DATA);
                 } break;
                 default:
                     break;
