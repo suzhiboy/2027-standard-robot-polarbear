@@ -256,7 +256,7 @@ void referee_data_solve(uint8_t * frame)
 
 void get_chassis_power_and_buffer(fp32 * power, fp32 * buffer)
 {
-    *power = power_heat_data.buffer_energy;
+    *power = power_heat_data.chassis_power;
     *buffer = power_heat_data.buffer_energy;
 }
 

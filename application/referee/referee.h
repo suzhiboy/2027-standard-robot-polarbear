@@ -153,9 +153,9 @@ typedef __packed struct  //0x0202
     // uint16_t shooter_17mm_1_barrel_heat;  //第 1 个 17mm 发射机构的枪口热量
     // uint16_t shooter_17mm_2_barrel_heat;  //第 2 个 17mm 发射机构的枪口热量
     // uint16_t shooter_42mm_barrel_heat;    //42mm 发射机构的枪口热量
-    uint16_t reserved1; 
-    uint16_t reserved2; 
-    float reserved; 
+    uint16_t chassis_voltage;  //电源管理模块的 chassis 口输出电压（单位：mV）
+    uint16_t chassis_current;  //电源管理模块的 chassis 口输出电流（单位：mA）
+    float chassis_power;       //底盘功率（单位：W）
     uint16_t buffer_energy; 
     uint16_t shooter_17mm_barrel_heat; 
     uint16_t shooter_42mm_barrel_heat;
