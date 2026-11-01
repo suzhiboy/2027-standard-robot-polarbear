@@ -1,6 +1,7 @@
 #ifndef __CUSTOM_TYPEDEF_H
 #define __CUSTOM_TYPEDEF_H
 
+#include <stdint.h>
 #include "stdbool.h"
 
 // 数据名称宏
@@ -25,6 +26,7 @@ typedef struct __Imu
     float angle[3];  // rad 欧拉角数据
     float gyro[3];   // rad/s 陀螺仪数据
     float accel[3];  // m/s^2 加速度计数据
+    uint32_t update_time;  // ms，IMU 数据最近一次完成更新的时刻
 } Imu_t;
 
 typedef struct  // 底盘速度向量结构体

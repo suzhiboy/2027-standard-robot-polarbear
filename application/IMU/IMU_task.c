@@ -253,6 +253,7 @@ static void UpdateImuData(void)
     IMU_DATA.accel[AX_X] = gVec[AX_X];
     IMU_DATA.accel[AX_Y] = gVec[AX_Y];
     IMU_DATA.accel[AX_Z] = gVec[AX_Z];
+    IMU_DATA.update_time = HAL_GetTick();
 }
 
 // clang-format off
@@ -571,6 +572,7 @@ inline float GetImuVelocity(uint8_t axis) { return IMU_DATA.gyro[axis]; }
   * @retval         (m/s^2) axis轴上的加速度
   */
 inline float GetImuAccel(uint8_t axis) { return IMU_DATA.accel[axis]; }
+inline uint32_t GetImuUpdateTime(void) { return IMU_DATA.update_time; }
 /**
   * @brief          获取yaw零飘修正值
   * @retval         (rad/s) yaw零飘修正值

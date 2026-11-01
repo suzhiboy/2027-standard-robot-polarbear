@@ -7,6 +7,7 @@
 extern inline float GetImuAngle(uint8_t axis);
 extern inline float GetImuVelocity(uint8_t axis);
 extern inline float GetImuAccel(uint8_t axis);
+extern inline uint32_t GetImuUpdateTime(void);
 extern float GetYawBias(void);
 
 extern float get_raw_gyro(uint8_t axis);

@@ -367,7 +367,7 @@ static void UsbSendImuData(void)
         return;
     }
 
-    SEND_DATA_IMU.time_stamp = HAL_GetTick();
+    SEND_DATA_IMU.time_stamp = GetImuUpdateTime();
 
     SEND_DATA_IMU.data.yaw = GetImuAngle(AX_YAW);
     SEND_DATA_IMU.data.pitch = GetImuAngle(AX_PITCH);
