@@ -22,6 +22,8 @@
 /* Includes ------------------------------------------------------------------*/
 #include "usbd_cdc_if.h"
 
+#include <string.h>
+
 /* USER CODE BEGIN INCLUDE */
 
 /* USER CODE END INCLUDE */
@@ -67,6 +69,8 @@
 /* It's up to user to redefine and/or remove those define */
 #define APP_RX_DATA_SIZE  2048
 #define APP_TX_DATA_SIZE  2048
+#define USB_RX_PACKET_SIZE 64U
+#define USB_RX_PACKET_QUEUE_SIZE 16U
 /* USER CODE END PRIVATE_DEFINES */
 
 /**
@@ -97,6 +101,17 @@ uint8_t UserRxBufferFS[APP_RX_DATA_SIZE];
 
 /** Data to send over USB CDC are stored in this buffer   */
 uint8_t UserTxBufferFS[APP_TX_DATA_SIZE];
+
+typedef struct
+{
+  uint16_t length;
+  uint8_t data[USB_RX_PACKET_SIZE];
+} UsbRxPacket_t;
+
+static UsbRxPacket_t USB_RX_PACKET_QUEUE[USB_RX_PACKET_QUEUE_SIZE];
+static volatile uint8_t USB_RX_QUEUE_HEAD;
+static volatile uint8_t USB_RX_QUEUE_TAIL;
+static volatile uint32_t USB_RX_QUEUE_OVERFLOW;
 
 /* USER CODE BEGIN PRIVATE_VARIABLES */
 
@@ -158,6 +173,9 @@ static int8_t CDC_Init_FS(void)
   /* Set Application Buffers */
   USBD_CDC_SetTxBuffer(&hUsbDeviceFS, UserTxBufferFS, 0);
   USBD_CDC_SetRxBuffer(&hUsbDeviceFS, UserRxBufferFS);
+  USB_RX_QUEUE_HEAD = 0;
+  USB_RX_QUEUE_TAIL = 0;
+  USB_RX_QUEUE_OVERFLOW = 0;
   return (USBD_OK);
   /* USER CODE END 3 */
 }
@@ -263,7 +281,18 @@ static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
 static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 {
   /* USER CODE BEGIN 6 */
-  USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
+  uint32_t length = (Len != NULL) ? *Len : 0U;
+  uint8_t next_head = (uint8_t)((USB_RX_QUEUE_HEAD + 1U) % USB_RX_PACKET_QUEUE_SIZE);
+
+  if ((length > USB_RX_PACKET_SIZE) || (next_head == USB_RX_QUEUE_TAIL)) {
+    USB_RX_QUEUE_OVERFLOW++;
+  } else if (length > 0U) {
+    memcpy(USB_RX_PACKET_QUEUE[USB_RX_QUEUE_HEAD].data, Buf, length);
+    USB_RX_PACKET_QUEUE[USB_RX_QUEUE_HEAD].length = (uint16_t)length;
+    USB_RX_QUEUE_HEAD = next_head;
+  }
+
+  USBD_CDC_SetRxBuffer(&hUsbDeviceFS, UserRxBufferFS);
   USBD_CDC_ReceivePacket(&hUsbDeviceFS);
   return (USBD_OK);
   /* USER CODE END 6 */
@@ -320,14 +349,8 @@ uint8_t USB_Transmit(uint8_t* Buf, uint16_t Len)
 }
 
 /**
-  * @brief  本函数为了方便使用USB设备接收数据，其实就是调用CDC_Receive_FS/-/
-  * @brief  Data received over USB OUT endpoint are sent over CDC interface
-  *         through this function.
-  *         @note
-  *         This function will block any OUT packet reception on USB endpoint
-  *         untill exiting this function. If you exit this function before transfer
-  *         is complete on CDC interface (ie. using DMA controller) it will result
-  *         in receiving more data while previous ones are still not sent.
+  * @brief  从 CDC 回调队列取出一个完整 USB OUT 包。
+  * @note   Len 入参是调用方缓冲区容量，返回时改为实际取出的字节数。
   *
   * @param  Buf: Buffer of data to be received
   * @param  Len: Number of data received (in bytes)
@@ -335,7 +358,35 @@ uint8_t USB_Transmit(uint8_t* Buf, uint16_t Len)
   */
 int8_t USB_Receive(uint8_t* Buf, uint32_t *Len)
 {
-    return CDC_Receive_FS(Buf,Len);
+    uint32_t capacity;
+    uint8_t tail;
+    uint16_t length;
+
+    if ((Buf == NULL) || (Len == NULL)) {
+        return USBD_FAIL;
+    }
+
+    capacity = *Len;
+    *Len = 0;
+    tail = USB_RX_QUEUE_TAIL;
+    if (tail == USB_RX_QUEUE_HEAD) {
+        return USBD_BUSY;
+    }
+
+    length = USB_RX_PACKET_QUEUE[tail].length;
+    if (capacity < length) {
+        return USBD_BUSY;
+    }
+
+    memcpy(Buf, USB_RX_PACKET_QUEUE[tail].data, length);
+    *Len = length;
+    USB_RX_QUEUE_TAIL = (uint8_t)((tail + 1U) % USB_RX_PACKET_QUEUE_SIZE);
+    return USBD_OK;
+}
+
+uint32_t USB_GetReceiveOverflowCount(void)
+{
+    return USB_RX_QUEUE_OVERFLOW;
 }
 /* USER CODE END PRIVATE_FUNCTIONS_IMPLEMENTATION */
 

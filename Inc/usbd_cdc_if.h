@@ -110,6 +110,8 @@ extern uint8_t USB_Transmit(uint8_t* Buf, uint16_t Len);
 
 extern int8_t USB_Receive(uint8_t* Buf, uint32_t *Len);
 
+extern uint32_t USB_GetReceiveOverflowCount(void);
+
 /* USER CODE END EXPORTED_FUNCTIONS */
 
 /**
