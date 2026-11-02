@@ -70,6 +70,7 @@ void referee_usart_task(void const * argument)
     {
 
         referee_unpack_fifo_data();
+        RefereeTxProcess();
         osDelay(10);
     }
 }
@@ -213,6 +214,9 @@ void USART6_IRQHandler(void)
             detect_hook(REFEREE_TOE);
         }
     }
+
+    // DMA 发送完成后由 UART TC 中断收尾，触发 HAL_UART_TxCpltCallback。
+    HAL_UART_IRQHandler(&huart6);
 }
 
 

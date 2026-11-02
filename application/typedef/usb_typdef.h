@@ -50,6 +50,7 @@
 #define PID_DEBUG_DATA_RECEIVE_ID  ((uint8_t)0x02)
 #define VIRTUAL_RC_DATA_RECEIVE_ID ((uint8_t)0x03)
 #define USB_ECHO_RECEIVE_ID        ((uint8_t)0x04)
+#define REFEREE_INTERACTION_DATA_RECEIVE_ID ((uint8_t)0x05)
 // clang-format on
 
 typedef struct
@@ -684,4 +685,19 @@ typedef struct
     } __packed__ data;
     uint16_t crc;
 } __packed__ ReceiveDataEcho_s;
+
+// USB 下发裁判系统交互数据包
+typedef struct
+{
+    FrameHeader_t frame_header;  // 数据段id = 0x05
+    uint32_t time_stamp;
+    struct
+    {
+        uint16_t data_cmd_id;
+        uint16_t sender_id;
+        uint16_t receiver_id;
+        uint8_t user_data[112];
+    } __packed__ data;
+    uint16_t crc;
+} __packed__ ReceiveDataRefereeInteraction_s;
 #endif  // USB_TYPEDEF_H

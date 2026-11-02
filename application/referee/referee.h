@@ -337,6 +337,15 @@ extern robot_custom_data_3_t robot_custom_data_3;
 
 extern void init_referee_struct_data(void);
 extern void referee_data_solve(uint8_t * frame);
+extern bool RefereeSendFrame(uint16_t cmd_id, const uint8_t * payload, uint16_t payload_len);
+extern bool RefereeSendInteraction(
+    uint16_t data_cmd_id,
+    uint16_t sender_id,
+    uint16_t receiver_id,
+    const uint8_t * user_data,
+    uint16_t user_data_len);
+extern void RefereeTxProcess(void);
+extern uint32_t RefereeGetTxDropCount(void);
 
 extern void get_chassis_power_and_buffer(fp32 * power, fp32 * buffer);
 extern uint16_t get_shoot_heat(void);

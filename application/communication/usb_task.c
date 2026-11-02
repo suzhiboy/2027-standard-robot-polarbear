@@ -59,8 +59,8 @@ uint32_t usb_high_water;
 #define USB_CONNECT_CNT 10
 
 #define USB_RECEIVE_LEN 150  // 单次接收最多读取的字节数
-// 双缓冲：起始位置最多推进 USB_RECEIVE_LEN，再读一次仍是 USB_RECEIVE_LEN
-#define USB_RX_DATA_SIZE (USB_RECEIVE_LEN * 2)
+// 接收缓存必须容纳一个最大 USB 帧和后续半帧
+#define USB_RX_DATA_SIZE 512
 
 #define HEADER_SIZE 4  // 帧头字节数
 
@@ -208,6 +208,7 @@ static ReceiveDataRobotCmd_s RECEIVE_ROBOT_CMD_DATA;
 static ReceiveDataPidDebug_s RECEIVE_PID_DEBUG_DATA;
 static ReceiveDataVirtualRc_s RECEIVE_VIRTUAL_RC_DATA;
 static ReceiveDataEcho_s RECEIVE_ECHO_DATA;
+static ReceiveDataRefereeInteraction_s RECEIVE_REFEREE_INTERACTION_DATA;
 
 // 机器人控制指令数据
 RobotCmdData_t ROBOT_CMD_DATA;
@@ -305,6 +306,10 @@ static void UsbInit(void)
     memset(&RECEIVE_PID_DEBUG_DATA, 0, sizeof(ReceiveDataPidDebug_s));
     memset(&RECEIVE_VIRTUAL_RC_DATA, 0, sizeof(ReceiveDataVirtualRc_s));
     memset(&RECEIVE_ECHO_DATA, 0, sizeof(ReceiveDataEcho_s));
+    memset(
+        &RECEIVE_REFEREE_INTERACTION_DATA,
+        0,
+        sizeof(ReceiveDataRefereeInteraction_s));
     memset(&ROBOT_CMD_DATA, 0, sizeof(RobotCmdData_t));
     memset(&VIRTUAL_RC_CTRL, 0, sizeof(RC_ctrl_t));
 
@@ -609,27 +614,32 @@ static void UsbEchoReply(const ReceiveDataEcho_s * request)
  * @brief      USB接收数据并解包
  * @param      None
  * @retval     None
- * @note       缓冲区内可能残留上一轮的半帧，起始指针最多推进 USB_RECEIVE_LEN，
- *             因此缓冲区大小取 2 倍，保证任意起点都能容纳一次完整读取。
+ * @note       CDC 回调先按真实包长入队；此处消费字节流，保留未完成的半帧。
  */
 static void UsbReceiveData(void)
 {
-    static uint8_t * rx_start = USB_RX_BUF;  // 本轮读取的起始位置（静态，保留半帧）
-
-    uint32_t len = USB_RECEIVE_LEN;
+    static uint16_t rx_length;
     uint8_t * rx_end;
     uint8_t * sof;
 
-    // 起始位置越界保护（正常情况下不会触发）
-    if ((uint32_t)(rx_start - USB_RX_BUF) + USB_RECEIVE_LEN > USB_RX_DATA_SIZE) {
-        rx_start = USB_RX_BUF;
+    while (rx_length < USB_RX_DATA_SIZE) {
+        uint32_t len = USB_RX_DATA_SIZE - rx_length;
+        if (len > USB_RECEIVE_LEN) {
+            len = USB_RECEIVE_LEN;
+        }
+        if ((USB_Receive(USB_RX_BUF + rx_length, &len) != USBD_OK) || (len == 0U)) {
+            break;
+        }
+        rx_length = (uint16_t)(rx_length + len);
     }
-    rx_end = rx_start + USB_RECEIVE_LEN;
 
-    // 读取数据
-    USB_Receive(rx_start, &len);
+    if (rx_length == 0U) {
+        return;
+    }
 
-    sof = rx_start;
+    rx_end = USB_RX_BUF + rx_length;
+
+    sof = USB_RX_BUF;
     while (sof < rx_end) {
         // 寻找帧头
         while ((sof < rx_end) && (*sof != RECEIVE_SOF)) {
@@ -672,6 +682,18 @@ static void UsbReceiveData(void)
                     memcpy(&RECEIVE_ECHO_DATA, sof, sizeof(ReceiveDataEcho_s));
                     UsbEchoReply(&RECEIVE_ECHO_DATA);
                 } break;
+                case REFEREE_INTERACTION_DATA_RECEIVE_ID: {
+                    memcpy(
+                        &RECEIVE_REFEREE_INTERACTION_DATA,
+                        sof,
+                        sizeof(ReceiveDataRefereeInteraction_s));
+                    RefereeSendInteraction(
+                        RECEIVE_REFEREE_INTERACTION_DATA.data.data_cmd_id,
+                        RECEIVE_REFEREE_INTERACTION_DATA.data.sender_id,
+                        RECEIVE_REFEREE_INTERACTION_DATA.data.receiver_id,
+                        RECEIVE_REFEREE_INTERACTION_DATA.data.user_data,
+                        sizeof(RECEIVE_REFEREE_INTERACTION_DATA.data.user_data));
+                } break;
                 default:
                     break;
             }
@@ -691,7 +713,7 @@ static void UsbReceiveData(void)
     if ((remaining > 0u) && (sof != USB_RX_BUF)) {
         memmove(USB_RX_BUF, sof, remaining);
     }
-    rx_start = USB_RX_BUF + remaining;
+    rx_length = remaining;
 }
 
 /*******************************************************************************/

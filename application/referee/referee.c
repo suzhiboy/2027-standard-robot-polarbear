@@ -24,8 +24,26 @@
 #include "stdio.h"
 #include "stm32f4xx_hal.h"
 #include "string.h"
+#include "usart.h"
 
 #define REFEREE_TIMEOUT 300  //裁判系统超时时间
+#define REFEREE_TX_QUEUE_SIZE 4U
+#define REFEREE_TX_MAX_PAYLOAD (REF_PROTOCOL_FRAME_MAX_SIZE - REF_HEADER_CRC_CMDID_LEN)
+
+typedef struct
+{
+    uint16_t length;
+    uint8_t data[REF_PROTOCOL_FRAME_MAX_SIZE];
+} referee_tx_packet_t;
+
+static referee_tx_packet_t referee_tx_queue[REFEREE_TX_QUEUE_SIZE];
+static volatile uint8_t referee_tx_head;
+static volatile uint8_t referee_tx_tail;
+static volatile bool referee_tx_busy;
+static volatile uint32_t referee_tx_drop_count;
+static uint8_t referee_tx_active[REF_PROTOCOL_FRAME_MAX_SIZE];
+static uint16_t referee_tx_active_length;
+static uint8_t referee_send_sequence;
 uint32_t referee_online_time = 0;
 uint32_t referee_receive_count = 0;
 
@@ -70,6 +88,11 @@ void init_referee_struct_data(void)
 {
     memset(&referee_receive_header, 0, sizeof(frame_header_struct_t));
     memset(&referee_send_header, 0, sizeof(frame_header_struct_t));
+    referee_tx_head = 0;
+    referee_tx_tail = 0;
+    referee_tx_busy = false;
+    referee_tx_drop_count = 0;
+    referee_send_sequence = 0;
 
     memset(&game_status, 0, sizeof(game_status_t));
     memset(&game_result, 0, sizeof(game_result_t));
@@ -106,6 +129,108 @@ void init_referee_struct_data(void)
     memset(&map_command, 0, sizeof(map_command_t));
     memset(&robot_custom_data, 0, sizeof(robot_custom_data_t));
     memset(&robot_custom_data_3, 0, sizeof(robot_custom_data_3_t));
+}
+
+bool RefereeSendFrame(uint16_t cmd_id, const uint8_t * payload, uint16_t payload_len)
+{
+    uint8_t next_head;
+    uint16_t data_length;
+    uint16_t frame_length;
+    referee_tx_packet_t * packet;
+
+    if ((payload_len > REFEREE_TX_MAX_PAYLOAD) || ((payload_len > 0U) && (payload == NULL))) {
+        return false;
+    }
+
+    next_head = (uint8_t)((referee_tx_head + 1U) % REFEREE_TX_QUEUE_SIZE);
+    if (next_head == referee_tx_tail) {
+        referee_tx_drop_count++;
+        return false;
+    }
+
+    packet = &referee_tx_queue[referee_tx_head];
+    packet->data[0] = HEADER_SOF;
+    // 本工程协议约定 data_length 只统计 cmd_id 后的 payload 长度。
+    data_length = payload_len;
+    memcpy(&packet->data[1], &data_length, sizeof(data_length));
+    packet->data[3] = referee_send_sequence++;
+    packet->data[4] = 0;
+    append_CRC8_check_sum(packet->data, REF_PROTOCOL_HEADER_SIZE);
+
+    memcpy(&packet->data[REF_PROTOCOL_HEADER_SIZE], &cmd_id, sizeof(cmd_id));
+    if (payload_len > 0U) {
+        memcpy(&packet->data[REF_PROTOCOL_HEADER_SIZE + sizeof(cmd_id)], payload, payload_len);
+    }
+
+    frame_length = (uint16_t)(REF_HEADER_CRC_CMDID_LEN + payload_len);
+    append_CRC16_check_sum(packet->data, frame_length);
+    packet->length = frame_length;
+    referee_tx_head = next_head;
+    return true;
+}
+
+bool RefereeSendInteraction(
+    uint16_t data_cmd_id,
+    uint16_t sender_id,
+    uint16_t receiver_id,
+    const uint8_t * user_data,
+    uint16_t user_data_len)
+{
+    robot_interaction_data_t interaction = {0};
+
+    if ((user_data_len > sizeof(interaction.user_data)) ||
+        ((user_data_len > 0U) && (user_data == NULL))) {
+        return false;
+    }
+
+    interaction.data_cmd_id = data_cmd_id;
+    interaction.sender_id = sender_id;
+    interaction.receiver_id = receiver_id;
+    if (user_data_len > 0U) {
+        memcpy(interaction.user_data, user_data, user_data_len);
+    }
+    return RefereeSendFrame(
+        STUDENT_INTERACTIVE_DATA_CMD_ID,
+        (const uint8_t *)&interaction,
+        sizeof(interaction));
+}
+
+void RefereeTxProcess(void)
+{
+    referee_tx_packet_t * packet;
+
+    if (referee_tx_busy || (referee_tx_tail == referee_tx_head)) {
+        return;
+    }
+
+    packet = &referee_tx_queue[referee_tx_tail];
+    memcpy(referee_tx_active, packet->data, packet->length);
+    referee_tx_active_length = packet->length;
+    referee_tx_tail = (uint8_t)((referee_tx_tail + 1U) % REFEREE_TX_QUEUE_SIZE);
+    referee_tx_busy = true;
+
+    if (HAL_UART_Transmit_DMA(&huart6, referee_tx_active, referee_tx_active_length) != HAL_OK) {
+        referee_tx_busy = false;
+    }
+}
+
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef * huart)
+{
+    if (huart == &huart6) {
+        referee_tx_busy = false;
+    }
+}
+
+void HAL_UART_ErrorCallback(UART_HandleTypeDef * huart)
+{
+    if (huart == &huart6) {
+        referee_tx_busy = false;
+    }
+}
+
+uint32_t RefereeGetTxDropCount(void)
+{
+    return referee_tx_drop_count;
 }
 
 void referee_data_solve(uint8_t * frame)
